@@ -1,0 +1,62 @@
+% Skid timeline: interrupt sampling (top) vs precise sampling (bottom).
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+    x=1cm, y=1cm,
+    every node/.style={font=\footnotesize},
+    tick/.style={thick},
+    eventlbl/.style={align=center, font=\scriptsize, anchor=south,
+        inner sep=1pt, text width=1.7cm},
+    arrow/.style={-{Latex[length=1.5mm]}, thick},
+    skidbrace/.style={decorate, decoration={brace, amplitude=4pt, mirror},
+        thick, RoyalPurple},
+    tracklbl/.style={anchor=east, font=\small\bfseries, inner sep=4pt},
+]
+
+% ---------- Top track: interrupt-based sampling ----------
+\def\ytop{0}
+\draw[arrow] (0, \ytop) -- (12, \ytop);
+\node[tracklbl] at (0, \ytop) {Interrupt sampling};
+
+% Tick marks + labels (top): uniform 2cm spacing.
+\foreach \x/\lbl in {%
+    1/{event-triggering\\instruction},
+    3/{counter\\overflow},
+    5/{microcode\\raises IRQ},
+    7/{IRQ controller\\handoff},
+    9/{handler\\entry},
+    11/{IP recorded}%
+}{
+    \draw[tick] (\x, \ytop-0.12) -- (\x, \ytop+0.12);
+    \node[eventlbl] at (\x, \ytop+0.18) {\lbl};
+}
+
+% Skid bracket spans the entire interrupt path.
+\draw[skidbrace] (1, \ytop-0.45) -- (11, \ytop-0.45)
+    node[midway, below=4pt, font=\small\bfseries, RoyalPurple] {skid};
+
+% ---------- Bottom track: precise sampling ----------
+% Bottom arrow is deliberately shorter than the top one: precise sampling
+% records and reports the IP without the long latency chain.
+\def\ybot{-3.2}
+\draw[arrow] (0, \ybot) -- (7, \ybot);
+\node[tracklbl] at (0, \ybot) {Precise sampling};
+
+\foreach \x/\lbl in {%
+    1/{event-triggering\\instruction},
+    3/{HW records\\architectural state},
+    5/{IP recorded}%
+}{
+    \draw[tick] (\x, \ybot-0.12) -- (\x, \ybot+0.12);
+    \node[eventlbl] at (\x, \ybot+0.18) {\lbl};
+}
+
+% Note sits to the right of the bottom track, in line with the arrow.
+\node[font=\scriptsize\itshape, anchor=west, align=left] at (7.6, \ybot)
+    {buffer drained later via batched \\IRQ, no per-sample skid};
+
+% Time axis labels follow each arrow's actual end.
+\node[anchor=north, font=\scriptsize] at (7, \ybot-0.05) {time};
+\node[anchor=north, font=\scriptsize] at (12, \ytop-0.05) {time};
+
+\end{tikzpicture}%
+}

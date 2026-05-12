@@ -1,0 +1,48 @@
+% PEBS vs IBS data flow, side by side. Two vertical pipelines with shared
+% colour vocabulary so the hardware/software boundary is visible at a glance.
+% Inputted via \input from chapters/2-background.tex.
+\begin{tikzpicture}[
+    x=1cm, y=1cm,
+    node distance=4mm,
+    every node/.style={font=\footnotesize},
+    box/.style={
+        draw, rounded corners=2pt, thick,
+        minimum width=3.6cm, minimum height=0.85cm,
+        align=center, inner sep=2pt,
+    },
+    hw/.style={box, fill=Orange!18, draw=Orange!80!black, text=black},
+    sw/.style={box, fill=black!10, draw=black!55, text=black},
+    flow/.style={-{Latex[length=1.8mm]}, thick, black!70},
+    title/.style={font=\small\bfseries},
+]
+
+% ===== Left column: Intel PEBS =====
+\node[title] (ptitle) at (0, 0) {Intel PEBS};
+\node[hw, anchor=north] (p1) at ([yshift=-3mm]ptitle.south) {counter overflow};
+\node[hw, anchor=north] (p2) at ([yshift=-3mm]p1.south) {PEBS arm};
+\node[hw, anchor=north] (p3) at ([yshift=-3mm]p2.south) {next event triggers\\PEBS assist (microcode)};
+\node[hw, anchor=north] (p4) at ([yshift=-3mm]p3.south) {record into\\DS area buffer};
+\node[hw, anchor=north] (p5) at ([yshift=-3mm]p4.south) {buffer threshold reached};
+\node[sw, anchor=north] (p6) at ([yshift=-3mm]p5.south) {interrupt};
+\node[sw, anchor=north] (p7) at ([yshift=-3mm]p6.south) {kernel reads buffer};
+
+\foreach \a/\b in {p1/p2, p2/p3, p3/p4, p4/p5, p5/p6, p6/p7}{
+    \draw[flow] (\a) -- (\b);
+}
+
+% ===== Right column: AMD IBS =====
+\node[title] (ititle) at (5.4, 0) {AMD IBS};
+\node[hw, anchor=north] (i1) at ([yshift=-3mm]ititle.south) {counter overflow};
+\node[hw, anchor=north] (i2) at ([yshift=-3mm]i1.south) {MSRs populated};
+\node[sw, anchor=north] (i3) at ([yshift=-3mm]i2.south) {interrupt};
+\node[sw, anchor=north] (i4) at ([yshift=-3mm]i3.south) {kernel reads MSRs};
+\node[hw, anchor=north] (i5) at ([yshift=-3mm]i4.south) {counter re-armed\\with pseudorandom offset};
+
+\foreach \a/\b in {i1/i2, i2/i3, i3/i4, i4/i5}{
+    \draw[flow] (\a) -- (\b);
+}
+
+% Legend lives in the figure caption (see chapters/2-background.tex) so it
+% does not collide with the right-hand column.
+
+\end{tikzpicture}

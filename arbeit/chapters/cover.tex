@@ -1,0 +1,26 @@
+% from https://github.com/fwalch/tum-thesis-latex
+\begin{titlepage}
+  \centering
+
+  \IfFileExists{assets/tum.pdf}{%
+    \includegraphics[height=20mm]{assets/tum.pdf}
+  }{%
+    \vspace*{20mm}
+  }
+
+  \vspace{5mm}
+  {\huge\MakeUppercase{\getFaculty{}}}\\
+
+  \vspace{5mm}
+  {\large\MakeUppercase{\getUniversity{}}}\\
+
+  \vspace{20mm}
+  {\Large \getDoctype{}}
+
+  \vspace{15mm}
+  {\huge\bfseries \getTitle{}}
+
+  \vspace{15mm}
+  {\LARGE \getAuthor{}}
+
+\end{titlepage}

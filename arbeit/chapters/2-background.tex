@@ -1,0 +1,225 @@
+\chapter{Background}\label{chap:background}
+
+Modern CPUs are designed around aggressive microarchitectural optimizations that decouple the instruction stream from the actual execution behavior in hardware. This complicates performance analysis because the temporal relationship between instruction issue, execution, and retirement is no longer strictly sequential. As a consequence, attributing performance-relevant events to individual instructions requires hardware support beyond simple counting mechanisms.
+This section provides an overview of relevant CPU microarchitectural features, hardware performance monitoring capabilities, and precise sampling mechanisms.
+
+\section{Processor Microarchitecture}
+\label{sec:processor-microarchitecture}
+
+Modern processors achieve high performance through a number of microarchitectural optimizations that increase instruction throughput and hide memory latency. However, these optimizations also decouple the architectural instruction stream from the actual execution behavior in hardware, which complicates performance analysis and event attribution. Understanding these mechanisms is therefore important when working with hardware-assisted profiling and precise sampling facilities such as Intel PEBS and AMD IBS.
+
+\subsection{Instruction-level parallelism}
+
+Modern CPUs exploit instruction-level parallelism (ILP) to execute multiple instructions concurrently. One important technique for achieving this is pipelining, where instruction execution is divided into multiple stages that can overlap in time\cite[C.1]{Hennessy2011}. A simple pipeline can be divided into the following five stages:
+\begin{enumerate}
+    \item Instruction Fetch (IF): Fetch the current instruction from memory and advance the program counter
+    \item Instruction Decode (ID): Decode the instruction and read required operands
+    \item Execute (EX): Perform arithmetic or logical operations and calculate memory addresses
+    \item Memory Access (MEM): Access memory for load and store instructions
+    \item Write Back (WB): Write results back to the register file
+\end{enumerate}
+
+Because different instructions can occupy different pipeline stages simultaneously, pipelining increases instruction throughput significantly\cite[C.1]{Hennessy2011}. Modern desktop and server processors use much deeper pipelines than the simple example above in order to support higher clock frequencies\cite{Cohen2024,W1zzard2025,Bruce}.
+
+Modern CPUs further increase parallelism using superscalar execution and out-of-order execution. Superscalar processors can issue multiple instructions per cycle to different execution units. Out-of-order execution allows instructions to execute as soon as their operands become available, rather than strictly following program order\cite[3.4]{Hennessy2011}. Specialized hardware dynamically tracks dependencies between instructions and schedules independent instructions for execution while stalled instructions wait for their operands.
+
+These optimizations improve utilization of execution resources and reduce pipeline stalls. However, they also make it difficult to directly associate hardware events with the original program order, because instructions may execute at different times and in a different order than they appear in the instruction stream.
+
+\subsection{Speculative execution}
+
+Control flow instructions such as branches create uncertainty about which instruction should be fetched next. Waiting until a branch condition has been fully evaluated would introduce pipeline stalls and reduce performance. To mitigate this problem, modern processors use branch prediction algorithms to predict the outcome of branches and continue execution along the predicted path.\cite[3.6]{Hennessy2011}
+
+This prediction enables speculative execution, where instructions are fetched and executed before it is known whether they are actually needed. If the prediction is correct, execution can continue without interruption. If the prediction is incorrect, the processor must discard the speculative work and restore the correct architectural state, which incurs a performance penalty\cite[3.9]{Hennessy2011}.
+
+Modern branch prediction mechanisms are highly accurate in practice\cite{Lam2021,Mittal2018}. Nevertheless, speculative execution further complicates performance analysis because instructions may execute transiently even if they never retire architecturally. Hardware profiling mechanisms must therefore carefully distinguish between speculative and architecturally completed execution.
+
+\subsection{Micro-operations and retirement}
+
+Complex instruction set architectures such as x86 typically do not execute instructions directly in hardware. Instead, instructions are decoded into simpler internal operations called micro-operations (micro-ops or $\mu$ops), which are then scheduled and executed by the processor core.\cite[3.13]{Hennessy2011}\cite[2.3]{AMDOptimizationGuide}
+
+A single architectural instruction can generate multiple micro-operations, especially for memory accesses or complex instructions. These micro-operations may execute independently and out of order inside the processor. Once all operations belonging to an instruction have completed successfully and any exceptions have been resolved, the instruction retires and its results become architecturally visible.
+
+Retirement occurs in program order even if execution itself happened out of order. This distinction is important for performance monitoring because many hardware events are associated either with execution or with retirement. Precise sampling mechanisms such as Intel PEBS and AMD IBS rely on hardware support that allows sampled events to be attributed to the correct architectural instruction despite out-of-order and speculative execution.\cite[2.2.2.3]{IntelManual}
+
+\subsection{Memory hierarchy}
+
+Accessing main memory is significantly slower than executing arithmetic or logical instructions. To reduce the resulting performance bottleneck, modern CPUs employ hierarchical memory systems consisting of multiple cache levels\cite{HARRIS2022498}. Caches are small but fast memory structures that store frequently accessed data and nearby memory locations\cite{Hennessy2011}.
+
+When the processor accesses memory, it first checks whether the requested data is already present in cache (cache hit). If the data is not available (cache miss), it must be fetched from lower levels of the memory hierarchy with increasingly higher latency\cite{Hennessy2011}. Because programs often reuse data (temporal locality) or access memory locations which are close to eachother (spatial locality)\cite{Denning2005,Weinberg}, caches can satisfy a large fraction of memory accesses despite their relatively small size.
+
+Processors additionally employ hardware prefetching mechanisms that attempt to predict future memory accesses and load data into caches before it is explicitly requested\cite[2.2]{Hennessy2011}. While these (and many other) techniques substantially improve average memory performance, memory accesses can still become a major performance bottleneck, especially for applications with irregular access patterns or large working sets\cite{Zandieh2025,Fisher}.
+
+Therefore, understanding memory behavior by profiling memory-related events is crucial for performance analysis and optimization.
+
+\section{Hardware Performance Monitoring}
+\label{sec:hardware-performance-monitoring}
+
+To monitor performance, processors include performance monitoring units (PMUs) that implement configurable Performance counters (PMCs). PMCs count the number of performance events in hardware, without slowing down what's running on the CPU. Modern processors support a wide range of events, architectural events which ideally work the same across architectures and non-architectural events which are implementation-specific. PMCs can be set up tp trigger an interrupt when the counter overflows, i.e. a threshold number of events have occured; this is the functionality that is usually used for profiling.\cite{IntelManual,AMDManual,ARMManual}
+
+PMUs expose this functionality through a set of registers. Control registers are used to enable or disable individual counters globally. Event select registers determine which hardware or software event a given counter monitors. Status registers report counter capabilities and overflow state. To profile a specific event, the relevant counter is enabled via the control register, its event select register is programmed with the target event, and the counter is preloaded with a negative offset equal to the desired sampling interval so that it overflows after that many events have elapsed.\cite{IntelManual,AMDManual,ARMManual}
+
+The Linux perf\_event subsystem is the standard high-level interface for accessing these hardware features, the \texttt{perf\_event\_open} system call exposes counters as files\footnote{Confusingly, the command-line profiling tool "perf" is also part of linux. It's based on this interface.}. Counters exposed as such are called either counting or sampling counters. Counting counters simply count the number of occured events and can be \texttt{read} at any time, while sampling counters generate an interrupt every number of events allowing the interrupt handler to collect data: the sample. What's recorded as part of the sample depends on the configuration of the counter, but typically includes the instruction pointer and some additional context information.\cite{perfManpage}
+
+The general workflow for sampling using this interface is as follows:
+\begin{enumerate}[label=\Alph*)]
+    \item configure PMCs with the threshold and events to monitor
+    \item run the application to be profiled
+    \item when the threshold is reached and an interrupt generated, the interrupt handler collects data for the sample and recrods that the threashold was reached
+    \item reconfigure the PMCs.
+\end{enumerate}
+
+This approach has two key limitations. Because the profiler runs on the same core as the application, they interfere with eachother. Increased accuracy through a lower threshold results in more interrupts being raised and more time spent in the handler and less for the application. The profiler running also affects the core's state, for example through memory accesses which pressure the caches.
+
+The second limitation of conventional sampling is the delay between the instruction that triggered the event (and thus an interupt) and the instruction pointer actually recorded by the interrupt handler and reported in the sample, called skid. This effect can significantly reduce attribution accuracy and is mainly caused by the latency in handling the interrupt\cite{VtuneManual}. The interrupt is caused by microcode in the CPU, then has to be handled by the CPUs interrupt controller and only then can software record the sample. All of this takes time, in which program execution continues.\cite{VtuneManual,uProfGetStarted}
+
+\begin{figure}[t]
+    \centering
+    \input{assets/skid-timeline.tex}
+    \caption[Skid in interrupt-based versus precise sampling.]{Skid in interrupt-based versus precise sampling. In interrupt-based sampling (top), the instruction pointer recorded by the handler is several stages downstream of the event-triggering instruction; the gap is the skid. In precise sampling (bottom), hardware records architectural state at the trigger itself, eliminating per-sample skid.}
+    \label{fig:skid-timeline}
+\end{figure}
+
+\section{Precise Sampling Mechanisms}
+\label{sec:precise-sampling}
+
+So-called precise sampling addresses this limitation by recording sample data not in software but in hardware, associating recorded samples more directly with the originating instruction\cite{VtuneManual,uProfGetStarted,speWhitepaper}. While not first-level sources, the respective sections in \cite{PEBSvsIBS} helped a lot.
+
+\begin{figure}[t]
+    \centering
+    \input{assets/pebs-vs-ibs.tex}
+    \caption[PEBS and IBS data flow.]{PEBS (left) and IBS (right) sample data flow. Shared colour coding distinguishes hardware-recorded (\tikz[baseline=-0.5ex]{\node[draw=Orange!80!black, fill=Orange!18, line width=0.6pt, rounded corners=0.5pt, minimum width=2.6mm, minimum height=2.6mm, inner sep=0pt]{};}) from software- or kernel-handled stages (\tikz[baseline=-0.5ex]{\node[draw=black!55, fill=black!10, line width=0.6pt, rounded corners=0.5pt, minimum width=2.6mm, minimum height=2.6mm, inner sep=0pt]{};}). Both backends converge at the same kernel entry point and expose comparable sample semantics to libpfm4, which is the contract that lets calimitos treat them as interchangeable backends.}
+    \label{fig:pebs-vs-ibs}
+\end{figure}
+
+\subsection{Intel Processor Event Based Sampling}
+\label{subsec:pebs}
+
+Intel Processor Event Based Sampling (PEBS) is a hardware mechanism introduced with the Nehalem architecture that enables precise attribution of sampled events\cite{NehalemManual}. When a configured counter overflows, PEBS is armed to trap the next time the event occurs. When it does, a microcode routine called PEBS assist records the architectural state directly into a PEBS record in a dedicated memory buffer. Unlike interrupt-based sampling, no skid is introduced.\cite{IntelManual,VtuneManual}
+
+These records accumulate in a buffer (the DS area) until a programmable buffer threshold is reached. At that point a hardware interrupt occurs, the kernel reads out all PEBS records, and delivers them to the profiling process.\cite{IntelManual}
+
+[parsep=5pt]
+
+The exact data recorded in a PEBS record depends on the event being monitored and the processor generation, but includes at least the instruction pointer, timestamp, and thread ID\footnote{A stream ID, the CPU (commonly also called core outside of the linux context), the current sampling period and the transaction type are also recorded but less important in this work.}. Some events also record additional information such as the memory addresses accessed, where in the memory hierarchy the accessed data actually was and the latency of said accesses.\cite{IntelManual}.
+
+\subsection{AMD Instruction-Based Sampling}
+\label{subsec:ibs}
+
+AMD's Instruction Based Sampling (IBS) is a dedicated hardware facility, separate from the general-purpose PMU infrastructure, introduced with the Family 10h generation of cores\cite{Drongowski2007,Greathouse2021}. It follows the instruction sampling approach proposed in \cite{Dean1997}. Each core's IBS unit consists of two control registers, two internal counters, and a set of Model Specific Registers (MSRs) that hold sampled data\cite{AMDManual}.
+
+IBS is divided into two components, which are programmed through the two control registers. IBS Fetch samples instruction fetch behavior, including instruction cache and TLB activity. This enables analysis of front-end bottlenecks such as instruction delivery stalls. IBS Op samples micro-operations, including data cache behavior, memory latency, and execution timing.\cite{AMDManual}
+
+After programming the control register, the monitored event will be counted by the respective internal counters belonging to the programmed sampling type (fetch or op counter) in the processor core. Samples are recorded in the MSRs when the counter overflows. A hardware interrupt is then raised, the kernel interrupt handler copies the MSR contents to a kernel-space buffer, and IBS is re-enabled with a fresh pseudorandom counter offset before resuming.\cite{AMDManual}
+
+Through the \texttt{perf\_event\_open} interface, the same information can be obtained from IBS samples as from PEBS samples, including the instruction pointer, timestamp, thread ID, and additional context such as memory addresses and latency for certain events\footnote{For more detail see\cite{AMDManual} or for better readability see\cite{Greathouse2021}.}\cite{AMDManual}.
+
+\section{libpfm4}\label{sec:libpfm4}
+libpfm4 is an open-source library, that translates human-readable PMU event specifications into the binary encodings required by the OS interface of either Linux, macOS or Windows. On Linux its central role is the translation of human-readable PMU event specifications into the binary encodings required by the \texttt{perf\_event\_open()} system call. The library supports a very wide range of PMUs, including most modern AMD, Intel, ARM and IBM architectures, as well as some SPARC and MIPS ones.\cite{libpfm4,eranian2006perfmon2}
+
+libpfm4 is used in code by passing an event string to \texttt{pfm\_get\_os\_event\_encoding()}, which populates a \texttt{perf\_event\_attr} struct and returns any relevant metadata. The resulting structure can be passed directly to \texttt{perf\_event\_open()} without further modification.\cite{libpfm4}
+
+To do so, libpfm4 maintains a compiled-in descriptor table for each supported PMU. Each table enumerates the available events alongside their raw opcodes, unit masks, and modifiers. Unit masks select a subtype of a base event, for example a base memory event can be combined with a mask that gates sampling on access latency \texttt{MEM\_TRANS\_RETIRED:LATENCY\_ABOVE\_THRESHOLD}. Modifiers control additional sampling attributes such as privilege level filtering or, on Intel, whether PEBS is enabled for a given event. In particular, this means differences in the encoding of the same event between microarchitectures are handled by libpfm4.\cite{libpfm4}
+
+libpfm4's scope is deliberately narrow: it handles event encoding only and has no involvement in file descriptor management, ring buffer configuration, multiplexing, or sample parsing. This makes it a natural low-level dependency for higher-level tools, including PAPI\cite{PAPI} and Caliper\cite{Boehme2016}, that own the \texttt{perf\_events} lifecycle but want to delegate the non-trivial problem of portable PMU encoding.
+
+\section{Caliper}\label{sec:caliper}
+Caliper is a performance instrumentation and measurement library developed at Lawrence Livermore National Laboratory (LLNL)\cite{Boehme2016,CaliperGh}, designed as a composable framework for collecting hardware and software performance data in HPC applications. It supersedes LLNL's Mitos\cite{mitosGh,memaxes}, which was a narrowly scoped tool for hardware memory access sampling via PEBS. In Caliper this generalizes into a broader instrumentation framework.
+
+Caliper's architecture centers on modular plugins, called services, that implement specific measurement concerns and compose without explicit coupling. Services are activated per measurement channel and communicate through a shared data model of named, typed attributes and snapshots. The \texttt{libpfm} service uses \texttt{libpfm4} to configure and open \texttt{perf\_events} sampling descriptors, injecting hardware sample records as snapshots. The \texttt{symbollookup} service annotates those samples with function names, source files, and line numbers by consulting symbol tables and DWARF debug information. The \texttt{recorder} service persists snapshots to Caliper's native \texttt{cali} format, which encodes measurement data alongside metadata required to interpret it; the \texttt{caliperreader} Python API allows parsing the \texttt{cali} format for flexible downstream analysis.\cite{CaliperDocs,CaliperGh}
+
+Caliper also provides built-in support for MPI\cite{mpiStandard}, OpenMP\cite{ompStandard}, Kokkos\cite{kokkos}, CUDA\cite{cuda}, ROCm\cite{rocm}, and integrates with third-party tools like NVidia Nsight/NVProf\cite{nvprof,nsight} and Intel VTune\cite{VtuneManual}\footnote{This happens through the following services: \texttt{mpi}, \texttt{mpireport}, \texttt{ompt}, \texttt{kokkostime}, \texttt{kokkoslookup}, \texttt{cupti}, \texttt{cuptitrace}, \texttt{roctracer}, \texttt{rocprofiler}, \texttt{roctx}, \texttt{nvtx} and \texttt{vtune}.}\cite[Building Caliper, Connection to third-party tools]{CaliperDocs}
+
+\subsection{Config and Option Specs}
+\label{subsec:cali-config-option-specs}
+
+Caliper can be configured programmatically via the ConfigManager C++ API, via persistent configuration files, or through \texttt{CALI\_CONFIG\_*} environment variables, allowing measurement setup to be decoupled from the application build\cite{CaliperDocs}.
+
+The \texttt{ConfigManager} API allows users to register new measurement configurations and options at runtime by passing JSON specification strings to \texttt{add\_config\_spec} and \texttt{add\_option\_spec}, respectivelycite{CaliperDocs}. These must be registered before any channel is created.
+
+A Config Specification (\texttt{config\_spec}) defines a named measurement configuration used by a \texttt{ChannelController}. It is a JSON dictionary specifying the \texttt{name} and \texttt{description} of the configuration, the Caliper \texttt{services} it requires, a \texttt{config} dictionary mapping \texttt{CALI\_*} environment-variable keys to values, a \texttt{categories} list that controls which option specs are applicable to this config, \texttt{defaults} for any of its options, and an inline \texttt{options} list for config-local options. When the required services are not present in the Caliper installation, the configuration is silently unavailable.
+
+An Option Specification (\texttt{option\_spec}) defines a named configuration modifier that can be applied to any config that lists the option's \texttt{category} in its \texttt{categories} field. Its JSON dictionary specifies the \texttt{name}, \texttt{category}, \texttt{description}, required \texttt{services}, and a \texttt{config} dictionary of additional \texttt{CALI\_*} variables the option activates. Options intended for aggregation-based metrics additionally carry a \texttt{query} dictionary with \texttt{local} and \texttt{cross} CalQL expressions that compute process-local and cross-process metrics from snapshot data, respectively.
+
+Once registered, a config is instantiated by name through \texttt{ConfigManager::add}, which accepts an option list in parentheses, e.g.\ \texttt{mgr.add("myconfig(myoption=true)")}, and the resulting channel is started with \texttt{ConfigManager::start}. This mechanism is the standard extension point for adding measurement configurations without modifying Caliper's source.\cite{CaliperDocs,CaliperGh}
+
+\subsection{Attributes and Snapshots}
+\label{subsec:cali-attributes-snapshots}
+
+The core data model in Caliper revolves around attributes and snapshots. An attribute is a named, typed key that services can associate with measurement events. Each attribute is modeled by an \texttt{Attribute} object, obtained via \texttt{Caliper::get\_attribute(const char* name)} or created via \texttt{Caliper::create\_attribute(name, type, properties)}. Attributes are global to the process and must be created before they are used in snapshots.
+
+A Snapshot is an immutable collection of key-value entries, where each entry pairs an Attribute with a Variant (a tagged value that can hold integers, floats, strings, etc.). Snapshots are constructed incrementally via a \texttt{SnapshotBuilder} object. Entries are added via the \texttt{SnapshotBuilder::append(Attribute, Variant)} method. After that, the \texttt{SnapshotBuilder} gets implicitly converted to a read-only \texttt{SnapshotView}, which allows services to query entries via \texttt{SnapshotView::get(Attribute)} or iterate over all entries.
+
+\subsection{Event Callbacks and Service Lifecycle}
+\label{subsec:cali-events-lifecycle}
+
+Caliper's event system allows services to register callbacks on a variety of measurement events. Key events include:
+\begin{itemize}
+    \item \texttt{post\_init\_evt}: Fired after a channel is fully initialized and all services have been registered. Used for service setup that depends on other services' attributes.
+    \item \texttt{snapshot}: Fired synchronously when a snapshot is being constructed, before it is finalized. Called with the SnapshotBuilder in a mutable state, allowing services to append additional entries. 
+    \item \texttt{finish\_evt}: Fired when a channel is shutting down. Used for resource cleanup.
+\end{itemize}
+
+Services register callbacks by obtaining a reference to the \texttt{Channel::events()} object and calling \texttt{connect(callback)} on the desired event\footnote{For example like this: \texttt{channel->events().snapshot.connect(callback);}, given a valid \texttt{channel} pointer.}. Callbacks for the \texttt{snapshot} event receive three parameters: a pointer to the active \texttt{Caliper} instance, a \texttt{SnapshotView} containing entries already added by earlier services, and a \texttt{SnapshotBuilder\&} through which new entries can be appended.\cite{CaliperGh}
+
+The snapshot fires synchronously during \texttt{Caliper::push\_snapshot()}, which may be called from interrupt handlers (e.g., the libpfm SIGIO handler) without special precautions. All snapshot callbacks thus execute in the same signal context as the triggering event, ensuring tight temporal coupling between the sample and any measurements taken in the callback.\cite{CaliperGh}
+
+\subsection{Service Registration and Static Composition}
+\label{subsec:cali-service-registration}
+
+Services are composable plugins loaded at runtime via a static service registry, compiled into the Caliper library at build time. Each service exports a descriptor, a \texttt{CaliperService} struct containing a JSON specification and a \texttt{ServiceRegisterFn} callback. The JSON spec declares the service's name, description, and configuration options. The register function is invoked once per channel that enables the service and is responsible for creating any service-specific Attribute objects, connecting callbacks to channel events (\Cref{subsec:cali-events-lifecycle}), and maintaining per-channel instance state if needed.\cite{CaliperGh}
+
+The build system generates the service registry from declarations added via the CMake macro \texttt{add\_caliper\_service()}, ensuring all services are available without requiring application code to explicitly link or initialize them. This allows services to be enabled purely through configuration, decoupling measurement setup from the application.\cite{CaliperGh}
+
+\subsection{Async-Signal-Safety}
+\label{subsec:cali-signal-safety}
+
+Because snapshot callbacks execute in signal context (\Cref{subsec:cali-events-lifecycle}), Caliper provides a signal-safe instance accessor, \texttt{Caliper::sigsafe\_instance()}, that permits querying the Caliper instance from signal handlers without triggering unsafe operations like mutex acquisition. All registered callbacks must be async-signal-safe, using only POSIX-approved operations (e.g., \texttt{clock\_gettime}, atomic reads). This contract is enforced by convention: the programmer is responsible for ensuring their callbacks adhere to signal-safety constraints.
+
+\section{Mitos}\label{sec:mitos}
+
+Mitos is a memory-access sampling library and command-line tool, originally developed at LLNL by Giménez et al.\ as the data-collection front-end for MemAxes\cite{memaxes}. It collects sampled memory performance data on a running application and persists them in a format that MemAxes can consume for visualization. By default, Mitos configures Intel PEBS (\Cref{subsec:pebs}) to sample loads exceeding a configurable latency threshold and stores; an alternative AMD IBS backend (\Cref{subsec:ibs}) can be selected at build time\cite{mitosIBS,Vanecek2026}.\cite{mitosGh}
+
+Mitos exposes three interfaces for invoking the sampler\cite{mitosGh}. All three interfaces converge on the same underlying sampler and produce the same on-disk output format.
+\begin{itemize}
+    \item \texttt{mitosrun} is a wrapper binary that launches a single-threaded target process under sampling and writes its output directory once the target exits. 
+    \item \texttt{mitoshooks} is a shared library that the target application links against; it transparently starts and stops sampling around OpenMP worker threads or MPI ranks (see below).
+    \item A C API can alternatively be called directly from instrumented application code, for example to bracket a region of interest. 
+\end{itemize}
+
+The sampler is a thin wrapper around the Linux \texttt{perf\_event\_open} interface (\Cref{sec:hardware-performance-monitoring}). For each monitored event Mitos populates a \texttt{perf\_event\_attr} structure manually, opens a file descriptor, maps a kernel ring buffer into user space via \texttt{mmap}, and installs a \texttt{SIGIO} signal handler that drains completed records from the ring buffer once the kernel signals readiness\cite{perfManpage}. The \texttt{perf\_event\_attr} encodings are hard-coded in the source: in PEBS mode, the raw event corresponding to \texttt{MEM\_TRANS\_RETIRED:LATENCY\_ABOVE\_THRESHOLD} is configured. In IBS mode, the IBS Fetch or IBS Op PMU type is selected by a compile-time flag\cite{mitosGh,Vanecek2026}. Because these encodings are written as literal opcodes against a specific microarchitecture, Mitos's PEBS path is tied to the Intel generations on which those encodings remain valid.
+
+OpenMP support is implemented through the OpenMP Tools Interface (OMPT)\cite{ompt}. \texttt{mitoshooks} registers \texttt{ompt\_callback\_thread\_begin} and \texttt{ompt\_callback\_thread\_end} callbacks; the begin callback creates a per-thread output context and starts an independent sampler bound to the OMP worker thread, while the end callback flushes the corresponding ring buffer. Per-thread raw outputs are merged into a single result directory in a separate post-processing step invoked by the user after the application exits.\cite{mitosGh,Vanecek2026}
+
+MPI support relies on the MPI profiling interface (PMPI)\cite{mpiStandard}. \texttt{mitoshooks} provides hook implementations of \texttt{MPI\_Init} and \texttt{MPI\_Finalize} (along with several point-to-point and collective routines for tracing) that forward to the underlying \texttt{PMPI\_*} symbols. The \texttt{MPI\_Init} hook starts a Mitos sampler on the local rank, while the \texttt{MPI\_Finalize} hook ends it, performs source-attribution, and merges per-rank output directories on rank 0\cite{mitosGh,Vanecek2026}.
+
+The output of a Mitos run is a directory \texttt{mitos\_<timestamp>/} containing the merged samples in CSV form, a hwloc\cite{hwloc} dump of the node's hardware topology (\texttt{hardware.xml}), and a copy of the application source files used in the build. Source-line attribution of samples is performed in post-processing using Dyninst\cite{dyninst}: the application records the virtual-address offset of its text segment to a temporary file at startup, and Mitos combines this offset with the symbol and DWARF information extracted from the debug-built binary to map each sample's instruction pointer to a source file and line\cite{mitosGh}. The resulting directory layout is the input format expected by MemAxes.
+
+Although MemAxes (\Cref{subsec:memaxes}) was Mitos's original target consumer, Mitos has since become a sampling building block for several downstream workflows rather than a standalone tool. The hwloc topology dump it emits is read by sys-sage\cite{Vanecek2024}, a system-topology management library that exposes a queryable representation of static and dynamic node properties to other tools in the HPC stack. A second example is the per-MPI-call CXL.mem performance model of Vanecek et al.\cite{Vanecek2026}, which extends Mitos with MPI-aware sampling and PAPI\cite{PAPI} counter collection in order to predict the benefit of replacing message-passing with shared CXL.mem buffers.
+
+\subsection{MemAxes}\label{subsec:memaxes}
+
+Mitos's primary application is supplying data for MemAxes. 
+
+"MemAxes is a tool for interactive analysis and visualisation of data movements within a node. It uses Mitos output (or possibly output of other tools) as input, and processes the data. MemAxes offers an interactive graphical user interface showing how many and how costly data load operations of each CPU core were, at which memory level they were satisfied, and where they originate in code, which enables users to find and mitigate (data movement-related) bottlenecks of their applications. Moreover, there are other views available, showing the sample distribution in time, processes, addresses, or core IDs, to name a few examples."\cite{DEEPSEA}
+
+The available views are the Hardware Topology View, the Parallel Coordinates View and the Code View. The Hardware Topology View visualizes the node's memory hierarchy and the distribution of samples across it. The Parallel Coordinates View visualizes all sample attributes in a single plot, allowing users to identify correlations between attributes. For example a big number of samples with a high latency, a specific memory level and a specific core ID could indicate a bottleneck in the memory hierarchy of that core. The Code View shows which source files and source lines are associated with the most memory access cycles. It also offers a code editor which shows relevant source code when the user selects something in any of the views.\cite{Schenk2023, memaxes}
+
+Beyond memory samples, this functionality requires:
+\begin{itemize}
+    \item a detailed model of the node's hardware topology, including the memory hierarchy and core layout, in the format provided by hwloc\cite{hwloc}
+    \item samples associated with source files and lines
+    \item source code files for the application which was profiled
+\end{itemize}
+
+
+\section{Related work}\label{sec:related-work}
+
+This work sits at the intersection of three bodies of literature: memory-access profiling tools, precise-sampling research on commodity hardware, and the Caliper measurement-library ecosystem.
+
+Original Mitos\cite{mitosGh} was developed by Giménez et al.\ at LLNL\cite{memaxes} as the data-collection front-end for MemAxes. It was later extended at TUM to support AMD IBS, among other advancements\cite{mitosIBS,Vanecek2026}. \Cref{sec:mitos} and \Cref{subsec:memaxes} describe both in depth; together they define the workflow this thesis re-implements end-to-end. Schenk\cite{Schenk2023} extended the MemAxes side of that pipeline to consume AMD IBS samples in addition to PEBS, in parallel to the AMD-IBS extension to Mitos itself.
+
+Intel VTune\cite{VtuneManual} and AMD uProf\cite{uProfGetStarted} are the canonical vendor-supported tools for hardware-assisted profiling on their respective platforms. Both ship rich sample analysis, polished UIs, and proprietary extensions on top of the same precise-sampling facilities (PEBS and IBS, respectively) that new Mitos exposes through libpfm4. Their closed-source, vendor-locked nature is precisely what motivates an open, vendor-agnostic alternative; new Mitos is far narrower in scope, but lives in that complementary niche.
+
+PAPI\cite{PAPI} is the long-standing portable interface for hardware performance counters on HPC systems, used by many higher-level tools as a thin abstraction over \texttt{perf\_event\_open}. 
+
+libpfm4\cite{libpfm4} is the descendant of perfmon2\cite{eranian2006perfmon2} and is the de-facto symbolic encoder for PMU events on Linux, used by PAPI, Caliper, and many other tools. New Mitos's microarchitecture-independence claim (\Cref{sec:eval-archindep}) ultimately rests on libpfm4's compiled-in PMU descriptor tables doing the per-microarchitecture encoding work for free; the technology selection of \Cref{sec:tech-selection} is, at its core, a decision to delegate to this layer rather than re-implement it.

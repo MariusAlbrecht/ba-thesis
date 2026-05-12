@@ -1,0 +1,6 @@
+I modified the IEEtran.bst file to show a "timestamp" field
+with "url accessed on semantics.
+
+Modifications are on L322 to accept the field and L1937-1940
+to actually render it. They are marked with the comment
+"MODIFICATION".

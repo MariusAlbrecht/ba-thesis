@@ -1,0 +1,220 @@
+% ip Instruction pointer id Sample id stream_id Stream id time Timestamp tid Thread id period Current sampling period cpu CPU transaction Type of transaction addr Data address* weight Latency* data_src Encoding for memory resource (L1, L2, DRAM etc.)*[parsep=5pt]
+[parsep=5pt]\chapter{Implementation}\label{chap:implementation}
+
+Throughout this chapter, the term \textit{original Mitos} refers to the existing tool described in \Cref{sec:mitos}, and \textit{new Mitos} refers to new Mitos presented here.
+
+\section{Design requirements}\label{sec:design-reqs}
+
+The following design requirements will be used to guide the design and implementation of new Mitos and to evaluate it afterwards.
+
+\paragraph{Comparable data}The data within the collected samples is the basis for all analysis done with mitos and therefore must at least be comparable to the data collected with the original Mitos.
+\requirement{The collected data must not be significantly different in terms of quality compared to the original Mitos.}
+\requirement{The collected data must not be significantly different in terms of quantity compared to the original Mitos.}
+
+\paragraph{Simple user interface}
+A key aspect of mitos is its ease of use and the low barrier to entry for users. This should not change with the new Mitos.
+\requirement{The user interface must not be harder to understand and use than the one in the original Mitos.}
+\requirement{The user interface should be close to the one in the original Mitos.}
+
+\paragraph{Feature parity}
+New Mitos can only be a viable replacement for original Mitos if the same (or better) features are available. Therefore, feature parity is essential.
+\requirement{Collecting samples from a code parallelized using OpenMP must be easily possible.}
+\requirement{Collecting samples from a code parallelized using MPI must be easily possible.}
+\requirement{Collected samples must be attributable to source code when the application is compiled with debug symbols.}
+\requirement{Specifying a custom sample callback function which can attach arbitriary data to each sample must be possible.}
+\requirement{The output format must be compatible with MemAxes\cite{Schenk2023}.}
+\requirement{Similiarly fine-grained control over sampling and annotating code should be available via an API.}
+
+\paragraph{Microarchitecture agnostic and Future proof}
+A design which keeps future hardware developments in mind means implemenation effort and neccesary code maintenance is reduced and extension to other hardware platforms is easy, should the need arise.
+\requirement{The system should be as independent of the specifics of any Vendor's implementation of precise sampling as possible.}
+\requirement{Intel PEBS and AMD IBS must be supported.}
+\requirement{In particular, PEBS must be supported on the Icelake microarchitecture.}
+\requirement{The system should be designed in a way that is very likely to support future CPU architectures with little effort and without fundamental changes to the design.}
+\requirement{Precise sampling technologies similar to PEBS and IBS from other vendors should be easy to integrate.}
+
+\paragraph{No performance regression}
+The relatively low performance overhead incurred during profiling is an important aspect of mitos and one of its key advantages over other profiling tools. Therefore, new Mitos should not cause a significant increase in overhead compared to original Mitos.
+\requirement{Memory usage must not increase significantly compared to the original Mitos.}
+\requirement{Execution time must not increase significantly compared to the original Mitos.}
+
+\section{Technology selection}\label{sec:tech-selection}
+Towards these goals, available technologies to access PMU data are compared and the best fitting one is chosen as a basis for the new Mitos. The main candidates are
+\begin{enumerate}[label=\Alph*)]
+    \item\label{techcomp:bare} The original Mitos with direct usage of the \texttt{perf\_events} API and, in particular, manual \texttt{perf\_event\_attr} configuration.
+    \item\label{techcomp:libpfm} The original Mitos but instead of manual \texttt{perf\_event\_attr} configuration, libpfm is used.
+    \item\label{techcomp:caliper} Caliper using the libpfm service.
+\end{enumerate}
+
+Many of the requirements are either clearly met or not met and don't have a clear path towards meeting them. For this reason I will only discuss the controversial ones in detail. The full comparison can be found in \Cref{table:techcomp}.
+
+Requirements \ref{req:1} and \ref{req:2} (data similar quantitavely and qualitatively) are not met for mitos with libpfm (candidate \ref{techcomp:libpfm}) and Caliper (candidate \ref{techcomp:caliper}) because this approach is not yet implemented. But, because libpfm ultimately uses the same mechanism as candidate \ref{techcomp:bare} to access PMU data, both candidates provide a clear path towards meeting these requirements.
+
+Requirement \ref{req:8} (sample callback) is met for candidates \ref{techcomp:bare} and \ref{techcomp:libpfm}. Caliper doesn't have sample callback functionality. However, the functionality can be implemented using a custom service and the snapshot event callback mechanism described in \Cref{subsec:cali-events-lifecycle}. By doing so, little changes to existing Caliper code are neccesary and future updates should be easily mergeable. This means candidate \ref{techcomp:caliper} has a clear path towards meeting requirement \ref{req:8}.
+
+Requirement \ref{req:9} (MemAxes compatibility) is met for candidates \ref{techcomp:bare} and \ref{techcomp:libpfm}, while candidate \ref{techcomp:caliper} provides different output formats by default. However, the \texttt{calireader} Python API can be used to convert the sample data into a MemAxes compatible \textit{csv} format. Alongside the sample data MemAxes also expects data about the hardware topology of the system, as provided by \textit{hwloc}. This can be run alongside Caliper, just like in the original Mitos. This means candidate \ref{techcomp:caliper} has a clear path towards meeting requirement \ref{req:9}.
+
+Requirements \ref{req:11}, \ref{req:12} and \ref{req:13} (architecture independence, general support for IBS and PEBS) are not met for candidate \ref{techcomp:bare} because the original Mitos uses hard-coded manual PMU configuration.  Candidate \ref{techcomp:caliper} meets the requirements because of its libpfm service. Similiarly, candidate \ref{techcomp:libpfm} has a clear path towards meeting requirements \ref{req:11}, \ref{req:12} and \ref{req:13} by implementing configuration using libpfm4.
+
+\begin{table}[!ht]
+    \centering
+    \begin{tabular}{|l|lll|}
+        \cline{2-4}
+        \multicolumn{1}{c|}{} & \textbf{bare (\ref{techcomp:bare})} & \textbf{libpfm (\ref{techcomp:libpfm})} & \textbf{Caliper (\ref{techcomp:caliper})} \\
+        \hline
+        \textbf{\ref{req:1}}  & yes                                 & possible                                & possible                                  \\
+        \textbf{\ref{req:2}}  & yes                                 & possible                                & possible                                  \\
+        \textbf{\ref{req:3}}  & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:4}}  & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:5}}  & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:6}}  & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:7}}  & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:8}}  & yes                                 & yes                                     & possible                                  \\
+        \textbf{\ref{req:9}}  & yes                                 & yes                                     & possible                                  \\
+        \textbf{\ref{req:10}} & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:11}} & no                                  & possible                                & yes                                       \\
+        \textbf{\ref{req:12}} & no                                  & possible                                & yes                                       \\
+        \textbf{\ref{req:13}} & no                                  & possible                                & yes                                       \\
+        \textbf{\ref{req:14}} & no                                  & yes                                     & yes                                       \\
+        \textbf{\ref{req:15}} & no                                  & yes                                     & yes                                       \\
+        \textbf{\ref{req:16}} & yes                                 & yes                                     & yes                                       \\
+        \textbf{\ref{req:17}} & yes                                 & yes                                     & yes                                       \\ \hline
+    \end{tabular}
+    \caption[Comparison of the different technology candidates towards the design requirements.]{Comparison of the different technology candidates towards the design requirements. "yes" means the requirement is met, "possible" means it is not met but there is a clear path towards meeting it and "no" means it is not met and there is no clear path towards meeting it.}
+    \label{table:techcomp}
+\end{table}
+
+Because the original Mitos (candidate \ref{techcomp:bare}) doesn't meet requirements \ref{req:11}, \ref{req:12} and \ref{req:13}, it is not a viable basis for the new Mitos. Both mitos with libpfm (candidate \ref{techcomp:libpfm}) and Caliper (candidate \ref{techcomp:caliper}) meet many but not all requirements but for both of them there is a clear path towards meeting all requirements.
+
+Therefore, both of them are reasonable bases for the new Mitos. I decide to use Caliper because of the following reasons:
+\begin{itemize}
+    \item Caliper is a mature project with multiple active developers and the Lawrence Livermore National Laboratory as its developing organization\cite{CaliperGh}, which means that it is likely to be well-maintained and supported in the future.
+    \item Caliper has a wide variety of features outside the scope of this project, which would also become accessible to users of the new Mitos and therefore increase its potential use cases (\Cref{sec:caliper}).
+\end{itemize}
+
+\section{System overview}\label{sec:calimitos-overview}
+
+New Mitos is delivered as a single header file, \texttt{calimitos.h}, together with a fork of Caliper that contributes one new service. No additional shared library is introduced: the application links against the (forked) Caliper installation and includes the header directly. Because new Mitos ideally uses the same API as original Mitos's C API, a header-only adapter is the smallest possible footprint that retains binary-comparable user-facing semantics. Requirements \ref{req:3} and \ref{req:4} (interface ease of use, interface continuity) benefit directly from this choice. A consequence of the header-only design is that state shared across translation units must be declared \texttt{inline} (C++17) to obtain a single shared instance rather than a per-translation-unit copy\cite{cppreference.com}. All implementation state therefore resides in a \texttt{calimitos\_detail} namespace as \texttt{inline} variables; the public \texttt{Mitos\_*} functions and \texttt{backend\_t} type are re-exported at global scope via \texttt{using} declarations, keeping the plain \texttt{Mitos\_*} functions.
+
+The functional decomposition aims to mirror the structure of original Mitos as described in \Cref{sec:mitos}, with each prior component replaced by a corresponding Caliper service:
+\begin{itemize}
+    \item Direct \texttt{perf\_event\_attr} configuration is replaced by the \texttt{libpfm} service, which composes libpfm4 (\Cref{sec:libpfm4}) with Caliper's snapshot infrastructure.
+    \item The SIGIO signal handler and ring-buffer drain are likewise provided by the \texttt{libpfm} service.
+    \item Source attribution, performed in original Mitos as a Dyninst-based postprocessing step, is performed by the \texttt{symbollookup} service.
+    \item The CSV writing is replaced by the \texttt{recorder} service together with the \texttt{cali\_to\_csv} Python converter described in \Cref{sec:output-memaxes}.
+    \item The user sample handler is replaced by a custom \texttt{sample\_callback} service (\Cref{sec:sample-callback}). Users can register their own callback functions, similar to the original Mitos API.
+\end{itemize}
+
+Almost the entire stack is replaced by composed Caliper services. The subsequent sections describe the small amount of glue and the single new service required to assemble these components into a Mitos-shaped tool.
+
+\section{Configuration}\label{sec:calimitos-config}
+
+The measurement configuration is assembled by subclassing Caliper's \texttt{ChannelController}. The \texttt{MitosChannelController} subclass packages the entire configuration and handles configuratuon semantics that can't be expressed through the standard Caliper API (\Cref{subsec:cali-config-option-specs}). Under the hood, a configuration map with \texttt{CALI\_*} keys is used.
+
+There are two principal dimensions of configuration that the controller handles:
+First which sampling backend (and thus which PMU event) to use, and second whether an MPI-aware configuration is desired. Backend selection is automatically done at runtime by inspecting the \texttt{flags} line of \texttt{/proc/cpuinfo} for the substrings \texttt{pebs} and \texttt{ibs} but the user can, and in many cases should, set all relevant configuration values themselves through an explicit API call.
+
+The same events which used in original Mitos are used for the PEBS, IBS Op, and IBS Fetch backends.
+For PEBS that is the libpfm \texttt{MEM\_TRANS\_RETIRED:LOAD\_LATENCY} event string. Original Mitos uses \texttt{MEM\_TRANS\_RETIRED:LATENCY\_ABOVE\_THRESHOLD}, which is an alias on some architectures but doesn't exist on others\cite{libpfm4}. The threshhold and the desired attributes per sample are configured in the \texttt{ChannelController}, because backend selection happens at runtime and can therefore not be handled through an \texttt{Option}. The threshold value is specific to this event.
+The IBS Op backend selects \texttt{amd64\_ibs\_op::IBS\_OP\_ALL}; the IBS Fetch backend selects \texttt{amd64\_ibs\_fetch::IBS\_FETCH\_ALL} with the IbsRandEn bit (bit 57) set in \texttt{CALI\_LIBPFM\_CONFIG} to randomize the fetch counter, matching the original Mitos \texttt{USE\_IBS\_FETCH} default\cite[13.3.2]{AMDManual}. All events are specified symbolically rather than as raw opcodes. The resulting encoding portability across microarchitectures within a given vendor is provided entirely by libpfm4 (\Cref{sec:libpfm4}). This portability is the mechanism by which \ref{req:11}, \ref{req:13}, and \ref{req:14} are met: the implementation contains no microarchitecture-specific opcodes, and adapting to a new microarchitecture of the same vendor requires no source change\footnote{It does require source changes but they'll be in libpfm4. An update of libpfm4 or Caliper might be neccesary.}.
+
+All relevant configs can also be manually set by the user through the API described in \Cref{tab:calimitos-api}. The API is a wrapper around the mechanism described above.
+
+\texttt{Mitos\_enable\_mpi} needs to always be manually called. The sampling itself does work without it but the output will not be in the required format.
+\texttt{Mitos\_set\_backend} does not neccesarily need to be called but the user should explicitly make sure the correct configuration is selected. The automatic selection works in many cases but is not robust.
+\texttt{Mitos\_set\_handler\_fm} needs to be called when required; see \Cref{sec:sample-callback} for details.
+The frequency, period and latency threshold smodify the sampled event. Deviation from the defaults may be neccesary depending on the usecase. If both frequency and period are set, the one set last takes precedence.
+The recorder configs and the \texttt{cali\_to\_csv} config should not usually be neccesary.
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabular}{@{}lp{7.5cm}@{}}
+        \textbf{Call}                                   & \textbf{Description}                                                           \\
+        \hline
+        \texttt{Mitos\_enable\_mpi}                     & Pull in MPI services; tag samples with \texttt{mpi.rank}                       \\
+        \texttt{Mitos\_set\_backend}                    & Select backend: \texttt{backend\_auto}, \texttt{backend\_pebs}, \texttt{backend\_ibs\_op}, \texttt{backend\_ibs\_fetch} \\
+        \texttt{Mitos\_set\_sample\_event\_period}      & Sample every $p$ events (mutually exclusive with frequency)                    \\
+        \texttt{Mitos\_set\_sample\_time\_frequency}    & Sample at frequency $f$ (mutually exclusive with period)                       \\
+        \texttt{Mitos\_set\_sample\_latency\_threshold} & PEBS-only: minimum latency in cycles to record                                 \\
+        \texttt{Mitos\_set\_handler\_fn}                & Register a per-sample callback                                                 \\
+        \texttt{Mitos\_set\_recorder\_directory}        & Override the output directory for \texttt{.cali} traces                        \\
+        \texttt{Mitos\_set\_recorder\_filename}         & Override the output filename for \texttt{.cali} traces                         \\
+        \texttt{Mitos\_set\_cali\_to\_csv\_script}      & Path to \texttt{cali\_to\_csv.py}; overrides \texttt{CALIMITOS\_CALI\_TO\_CSV} \\
+    \end{tabular}
+    \caption{new Mitos configuration API. The calls are ranked in terms of importance.}
+    \label{tab:calimitos-api}
+\end{table}
+
+\section{Sample callback}\label{sec:sample-callback}
+
+To satisfy requirement \ref{req:8} (sample callback) a new Caliper service, \texttt{sample\_callback}, is implemented. The service provides an API for registering a callback function that is, in turn, used by \texttt{Mitos\_set\_handler\_fn}. An implementation sketch was discussed in \Cref{sec:tech-selection}, when choosing Caliper as a backend. The details of the implementation and the design decisions are described subsequently.
+
+\subsection{Architectural placement}\label{subsec:sample-callback-placement}
+
+The implementation is carried as a fork of Caliper. Any modification to existing upstream files would become a recurring merge conflict on every future release. Two candidate placements were considered for the callback dispatch:
+\begin{enumerate}
+    \item direct modification fo the libpfm service's \texttt{sample\_handler} to invoke the user callback;
+    \item a self-contained new service in its own subdirectory under \texttt{src/services/}.
+\end{enumerate}
+
+I selected the new service as the minimum-impact mechanism consistent with the upstream-tracking constraint. The only modification to existing files is a single line in \texttt{
+    src/services/CMakeLists.txt} to register the new service's source files with the build system. The new service is otherwise entirely self-contained, with no upstream merge conflicts expected.
+
+\subsection{Mechanism}\label{subsec:sample-callback-mechanism}
+
+The service occupies a single position in the channel's \texttt{snapshot} callback chain. Its \texttt{ServiceRegisterFn} registers with \texttt{chn->events().snapshot}. The callback is invoked synchronously by \texttt{Caliper::push\_snapshot} for every snapshot taken on the channel, with the signature \texttt{void(Caliper*, SnapshotView trigger, SnapshotBuilder\& rec)}. This exact signature is fully forwarded to the user. The \texttt{trigger} SnapshotView contains the entries already attached by the triggering service (in the case of a libpfm sample, the entries assembled in the libpfm \texttt{sample\_handler}) and the \texttt{rec} builder is mutable, accepting further entries via \texttt{rec.append(attribute, value)}.
+
+The service exposes a \texttt{void register\_callback(function, args)} function along with the \texttt{callback\_fn} function type, both in the \texttt{cali::sample\_callback} namespace. This registration function is used by \texttt{Mitos\_set\_handler\_fn} to register the user callback with the service. To do this, the \texttt{sample\_callback.h} header is included.
+
+The \texttt{snapshot} event also fires for triggers other than libpfm samples, for example region begin and end events propagated by the \texttt{event} service, or explicit \texttt{Caliper::push\_snapshot} calls from other services. By default the dispatcher invokes the user callback on every snapshot. To suppress invocations on snapshots for which the user callback has no meaningful work, the service exposes a \texttt{CALI\_SAMPLE\_CALLBACK\_FILTER\_ATTRIBUTE} configuration variable: when set, the dispatcher inspects the \texttt{trigger} view and invokes the user callback only when an entry with the named attribute is present. New Mitos sets this variable to \texttt{libpfm.event\_sample\_name} in \texttt{MitosChannelController}, so within a Mitos channel the user callback is invoked exactly on libpfm samples. This indirection is what keeps the new service free of any hard-coded dependency on the libpfm attribute namespace; the libpfm coupling lives entirely in \texttt{calimitos.h}, not in the Caliper service itself, which preserves the future-proofing argument of \Cref{sec:design-reqs} (\ref{req:11}, \ref{req:14}). Filtering is applied in the hot path with two atomic loads, one branch on the cached \texttt{Attribute} object, and a small linear scan over the trigger view; when filtering is disabled, the second branch short-circuits.
+
+\subsection{Temporal proximity}\label{subsec:sample-callback-temporal}
+
+The principal property delivered by this placement is that the user callback executes within the same signal handler invocation as the kernel sample delivery. The call stack at the point of invocation, from the bottom up, is: the kernel SIGIO delivery; the libpfm service's \texttt{sigio\_handler}; the libpfm service's \texttt{sample\_handler}; \texttt{Caliper::push\_snapshot}; and the dispatcher in the \texttt{sample\_callback} service. \begin{figure}[h]
+    \centering
+    \input{assets/callstack.tex}
+    \caption[Call stack on user-callback dispatch.]{Call stack at the moment the user callback is dispatched. Bottom-up: the kernel delivers SIGIO; the libpfm service's \texttt{sigio\_handler} and \texttt{sample\_handler} run in signal context; \texttt{Caliper::push\_snapshot} drives the snapshot pipeline; and the \texttt{sample\_callback} dispatcher invokes the user callback. All frames above the kernel run in the same signal-handler invocation, so the user callback inherits the async-signal-safety contract of \Cref{subsec:cali-signal-safety}.}
+    \label{fig:callstack}
+\end{figure} The temporal coupling between the hardware event and the user callback is bounded only by the latency that the libpfm service itself incurs between sample arrival and the call to \texttt{Caliper::push\_snapshot}. Similiarly, the original Mitos also processes the entire sample before the custom callback is invoked. 
+
+\subsection{Contract on user callbacks}\label{subsec:sample-callback-contract}
+
+Because the user callback executes in signal context, it is bound by the async-signal-safety contract introduced in \Cref{subsec:cali-signal-safety}. The contract is enforced by convention rather than by mechanism: the set of permissible operations corresponds to the POSIX async-signal-safe function list\cite{sigsafetyManpage}, and the \texttt{Caliper::sigsafe\_instance()} accessor must be used in place of \texttt{Caliper::instance()} whenever the callback queries Caliper state.
+
+A second, related constraint follows. Any \texttt{Attribute} object used in \texttt{rec.append(attr, value)} must be created outside the callback via \texttt{Caliper::create\_attribute}, because that call is itself not async-signal-safe. \texttt{Attribute} objects are cheap to copy and may be retained as global or thread-local variables for use inside the callback.
+
+These constraints fix a calling order. \texttt{Caliper::create\_attribute} for every attribute the callback will append, and \texttt{Mitos\_set\_handler\_fn} itself, must precede \texttt{Mitos\_begin\_sampler}; once sampling is active, the only Caliper operations the callback may perform are signal-safe lookups against pre-created attributes and \texttt{rec.append} into the supplied \texttt{SnapshotBuilder}. Registering the callback after sampling has started leaves the initial samples flowing through the default no-op dispatcher.
+
+\subsection{Programmatic interface}\label{subsec:sample-callback-api}
+
+The registration interface consists of a single function and a single typedef:
+\begin{itemize}
+    \item a callback type \texttt{cali::sample\_callback::callback\_fn}, defined as a function pointer with signature \texttt{void(Caliper\&, SnapshotView, SnapshotBuilder\&, void*)};
+    \item a registration entry point \texttt{Mitos\_set\_handler\_fn(fn, args)} that installs the callback together with an opaque \texttt{void*} user context which will get handed to the callback.
+\end{itemize}
+The callback pointer and its argument are stored as \texttt{std::atomic} variables internal to the service, so that the dispatcher can load them safely from signal context. The choice of a plain function pointer in preference to \texttt{std::function} is itself a signal-safety consequence: a \texttt{std::function} invocation is not generally async-signal-safe, whereas an atomic load of a function pointer followed by an indirect call is signal-safe by construction.
+
+A typical use of the interface follows a fixed pattern. The application creates the attributes it intends to attach, registers its callback, and then begins sampling. Inside the callback, it uses only async-signal-safe operations to compute the data to attach and appends it to the supplied builder. The interface places no restriction on the semantic content of the attached data; the attribute names, types, and values are entirely under the control of the application. Though, because the callback executes roughly at sample time, heavy computation may impact performance.
+
+\section{Parallel runtime support}\label{sec:parallel-runtime}
+
+Requirements \ref{req:5} and \ref{req:6} call for OpenMP and MPI support. In original Mitos this is delivered by the \texttt{mitoshooks} component (\Cref{sec:mitos}). In new Mitos no equivalent component exists; the functionality is provided entirely by Caliper's built-in services and the configuration toggle in \texttt{Mitos\_enable\_mpi}.
+
+OpenMP Support follows from Caliper's OMPT integration combined with the per-thread initialization already present in the libpfm service. The libpfm service connects to the channel's \texttt{create\_thread\_evt} and, for each new thread, opens its own \texttt{perf\_event\_open} descriptor, maps a ring buffer, and installs a SIGIO handler; the matching teardown runs on \texttt{release\_thread\_evt}. Caliper's OMPT service translates OMPT thread-begin and thread-end callbacks into exactly these channel events, so every OMP worker spawned by the runtime becomes a sampling target though the libpfm service.
+
+MPI Support is provided by Caliper's \texttt{mpi} and \texttt{mpireport} services, which are enabled in the channel via \texttt{Mitos\_enable\_mpi}. The \texttt{mpi} service wraps MPI initialization and finalization through PMPI and tags every snapshot with the \texttt{mpi.rank} attribute. The \texttt{mpireport} service aggregates caliper records, first locally by rank and then globally across ranks, and emits a \texttt{cali} file containing the data from all ranks.
+
+Caliper also ships integrations for Kokkos, CUDA, ROCm, and RAJA (\Cref{sec:caliper}). These services do not drive sampling; they expose runtime-level events like kernel launches, region begin and end markers, host--device transfers as Caliper snapshots. Because they share the same channel and snapshot infrastructure as the libpfm service, a new Mitos channel can additionally enable any of them to correlate hardware samples with higher-level runtime events. This composition requires no changes to new Mitos.
+
+Two issues surfaced in practice. First, the libpfm service carries thread-local state per open sampler, so threads that exit without going through \texttt{release\_thread\_evt} (i.e., threads not managed by the OMPT runtime) leak descriptors. Second, sampling must be started after \texttt{MPI\_Init}, because the \texttt{mpi.rank} attribute is only populated once MPI is initialized; \texttt{Mitos\_begin\_sampler} therefore needs to be called from within the MPI region.
+
+The implementation effort in new Mitos for parallel runtime support is the \texttt{Mitos\_enable\_mpi} toggle and nothing else. This is a concrete instance of the framework leverage argued in \Cref{sec:calimitos-overview}.
+
+\section{Output format and MemAxes integration}\label{sec:output-memaxes}
+
+The new implementation aims to replicate the output format of original Mitos, which is a CSV file containing one row per sample with columns for the sample's timestamp, the sampled event's name, the instruction pointer (IP) at which the event occurred, and any additional data attached by the user callback. \texttt{hwloc} hardware topology information is collected separately, just like original Mitos. Source files are copied based on the IP-to-source mapping provided by the \texttt{symbollookup} service.
+
+\section{Build and deployment}\label{sec:build-deployment}
+
+The new implementation is accompanied by a spack package. Therefore, the installation is very easy.

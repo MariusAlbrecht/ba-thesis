@@ -1,0 +1,73 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage{textcomp}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage[inline]{enumitem}
+
+\bibliographystyle{plain}
+
+\title{A Future-proof and Microarchitecture-agnostic Approach to Collecting CPU Hardware Samples}
+\author{
+    Marius Albrecht \\
+    Chair of Computer Architecture and Parallel Systems \\
+    Technical University of Munich \\
+    \href{mailto:marius.albrecht@tum.de}{\texttt{marius.albrecht@tum.de}}
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Motivation}
+
+Quick intro to the topic: HPC\textrightarrow performance\textrightarrow profiling\textrightarrow mitos \\
+Explanation of the issue with mitos. \\
+Problem statement.
+
+\section{Background}
+Maybe split this into "Background" (including related work) and "tools"? I feel like both belongs in the background but the nesting is pretty deep considering e.g. \ref{subsub:mitos} ("Mitos") will be pretty long.
+\subsection{Theoretical}
+\subsubsection{CPU internals}
+As much as is neccesary to explain how PMUs and precise sampling (PEBS and kind of IBS) work and what the differences are between different architectures. \\
+This will probably be the basics of processor design in general, OOE, pipelines, caches, memory hierarchy, as well as how PMUs work in general. \\
+Lots of terms defined here.
+\subsubsection{Precise Event sampling}
+Precise event sampling shows up as a umbrella term in the literature. Define this, explain its general position in tee context of pther hardware profiling techniques and their practical uses. \\
+Positioning of PEBS, IBS as specific implementations of precise sampling.
+\subsubsection{PEBS}
+\subsubsection{IBS}
+Both kind of obvious. Explain all details, especially what's visible for the programmer. Less focuson IBS (?)
+\subsection{tools}
+As much as neccesary for the next section.
+\subsubsection{perf\_event\_open}
+\subsubsection{libpfm}
+\subsubsection{Mitos}\label{subsub:mitos}
+\subsubsection{Caliper}
+\subsection{Related work}
+TBA mostly. Id like to see
+\begin{enumerate*}
+    \item Other tools and possible usages of precise sampling
+    \item overhead/accuracy studies, in particular what other factors of the system affect accuracy and overhead
+    \item maybe other (possibly more esoteric) implementations. Think POWER, RISCV and maybe ARM
+\end{enumerate*}
+
+\section{Implementation}\label{sec:impl}
+\subsection{Requirements}
+already done. Use in \ref{sec:impl} and \ref{sec:eval}.
+\subsection{Tech comparison}
+Compare mitos with manual config, mitos with libpfm config and Caliper as "backend" solutions.
+\subsection{Implementation}
+Rough explanation of the design, no "Design" subsection. \\
+Explain the whole implementation.
+
+\section{Evaluation}\label{sec:eval}
+Go through requirements. \\
+Maybe do some more? This might get kind of short but so be it i guess, I want a toplevel "Evaluation" section.
+
+\section{Conclusion}
+TBA
+\subsection{future work}
+TBA
+
+\end{document}

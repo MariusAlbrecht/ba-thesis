@@ -1,0 +1,11 @@
+\chapter{Motivation}\label{chap:motivation}
+
+High-performance computing (HPC) is a field essential for various scientific, industrial, and governmental applications\cite{research-supercomputing-example,industry-supercomputing-example,ecp-AD-report} with the main goal of achieving good performance when running these applications.
+
+Available hardware constantly improves, and so software needs to constantly improve and adapt as well. To achieve great performance, developers need to write code that utilizes the hardware efficiently. In many cases overall performance is bound by one specific resource, such as compute power or memory bandwidth. Meaningful optimizations aim to alleviate these bottleneceks so that all resources are used more effectively, increasing overall performance.\cite{Vecchio2022}
+
+Memory-bound workloads are hard to optimize from source code alone: code-centric profilers show where time is spent but not which data accesses caused the stalls or at what level of the memory hierarchy. Closing this gap requires recording per-access addresses, latencies, and memory-hierarchy levels, which modern CPUs expose through facilities such as Intel PEBS and AMD IBS\cite{IntelManual,AMDManual}.
+
+Mitos\cite{mitosGh} turns these raw samples into a workflow developers can act on. Originally built at LLNL as the data-collection front-end for MemAxes\cite{memaxes}, it samples loads above a configurable latency threshold, attributes each sample to a source file and line, and bundles the result with a node topology dump. This thesis was based on the assumption that the original Mitos implementation does not properly work on the Intel Ice Lake architecture. Later it turned out that is not true.
+
+This work originally aimed to address this "limitation" by using a more microarchitecture-independent approach to access sampling data. The goal of this thesis changed to providing a more robust, future-proof Mitos implementation.

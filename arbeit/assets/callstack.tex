@@ -1,0 +1,45 @@
+% Call stack at the moment a sample is dispatched to the user callback.
+% Bottom = oldest frame (kernel), top = innermost frame (user callback).
+% Inputted via \input from chapters/3-implementation.tex.
+\begin{tikzpicture}[
+    x=1cm, y=1cm,
+    frame/.style={
+        draw, rounded corners=1pt, thick,
+        minimum width=6.2cm, minimum height=0.7cm,
+        font=\small\ttfamily, align=center,
+        fill=white,
+    },
+    band/.style={rounded corners=2pt, draw=none},
+    bandlbl/.style={font=\scriptsize\itshape, anchor=west, text=black!70},
+    growarrow/.style={-{Latex[length=2mm]}, very thick, black!50},
+]
+
+% --- Bands (drawn first, behind frames) ---
+% kernel context
+\fill[band, fill=black!8]
+    (-0.4, -0.45) rectangle (6.2, 0.45);
+% signal context (libpfm)
+\fill[band, fill=RoyalPurple!12]
+    (-0.4, 0.55) rectangle (6.2, 2.45);
+% Caliper-mediated context
+\fill[band, fill=Orange!12]
+    (-0.4, 2.55) rectangle (6.2, 4.45);
+
+% Band labels (right side)
+\node[bandlbl] at (6.4, 0)   {kernel context};
+\node[bandlbl, align=left] at (6.4, 1.5) {signal context\\(async-signal-safe)};
+\node[bandlbl, align=left] at (6.4, 3.5) {Caliper-mediated\\(still in signal context)};
+
+% --- Frames, bottom-up ---
+\node[frame] (kernel) at (2.9, 0)   {kernel SIGIO delivery};
+\node[frame] (sigio)  at (2.9, 1)   {libpfm::sigio\_handler};
+\node[frame] (sample) at (2.9, 2)   {libpfm::sample\_handler};
+\node[frame] (push)   at (2.9, 3)   {Caliper::push\_snapshot};
+\node[frame] (disp)   at (2.9, 4)   {sample\_callback dispatcher\\$\rightarrow$ user callback};
+
+% --- "calls" arrow on the left ---
+\draw[growarrow] (-0.7, -0.2) -- (-0.7, 4.2)
+    node[midway, left=2pt, font=\scriptsize, rotate=90, anchor=south, text=black!60]
+    {calls};
+
+\end{tikzpicture}

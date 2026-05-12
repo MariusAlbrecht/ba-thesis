@@ -1,0 +1,83 @@
+\documentclass[headsepline,footsepline,footinclude=false,oneside,fontsize=11pt,paper=a4,listof=totoc,bibliography=totoc]{scrbook}
+
+\usepackage[utf8]{inputenc} % Textkodierung: UTF-8
+\usepackage[T1]{fontenc} % Zeichensatzkodierung
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks=true, allcolors=RoyalPurple]{hyperref}
+\usepackage{cleveref}
+\usepackage{ellipsis} % after hyperref
+\usepackage[inline]{enumitem}
+\usepackage{soul} % \hl, \ul
+\usepackage[normalem]{ulem} % \dashuline
+\usepackage[ngerman,american]{babel}
+% \usepackage[outputdir=out, frozencache]{minted} % disable shell escape
+\usepackage{subcaption}
+\usepackage{microtype}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, decorations.pathreplacing, shapes.geometric, fit, backgrounds, calc, shapes.symbols}
+
+\newcounter{reqcounter}
+\renewcommand{\thereqcounter}{R\arabic{reqcounter}}
+\newcommand{\requirement}[1] {
+    \refstepcounter{reqcounter}
+    ~\\
+    \textbf{R\arabic{reqcounter}}\label{req:\arabic{reqcounter}} #1
+}
+
+\setkomafont{disposition}{\normalfont\bfseries} % use serif font for headings
+\linespread{1.05} % adjust line spread for mathpazo font
+
+% Add table of contents to PDF bookmarks
+\BeforeTOCHead[toc]{{\cleardoublepage\pdfbookmark[0]{\contentsname}{toc}}}
+
+\newcommand*{\getUniversity}{Technische Universität München}
+\newcommand*{\getFaculty}{School of Computation, Information and Technology}
+\newcommand*{\getTitle}{A Future-proof and Microarchitecture-agnostic Approach to Collecting CPU Hardware Samples}
+\newcommand*{\getTitleGer}{Ein zukunftssicheres und Mikroarchitektur-unabhängiges Verfahren zum Sammeln von CPU Hardware Samples}
+\newcommand*{\getAuthor}{Marius Albrecht}
+\newcommand*{\getDoctype}{Bachelor's Thesis in Informatics}
+\newcommand*{\getSupervisor}{Prof. Dr. Martin Schulz}
+\newcommand*{\getAdvisor}{M.Sc. Stepan Vanecek}
+\newcommand*{\getSubmissionDate}{11.05.2026}
+\newcommand*{\getSubmissionLocation}{Munich}
+
+\begin{document}
+
+\input{chapters/cover}
+
+\frontmatter{}
+
+\input{chapters/title}
+\input{chapters/disclaimer}
+\input{chapters/acknowledgments}
+\input{chapters/abstract}
+
+\microtypesetup{protrusion=false}
+\tableofcontents{}
+\microtypesetup{protrusion=true}
+% \title{\getTitle}
+% \maketitle
+
+\mainmatter{}
+
+\input{chapters/1-motivation.tex}
+\input{chapters/2-background.tex}
+\input{chapters/3-implementation.tex}
+\input{chapters/4-evaluation.tex}
+\input{chapters/5-conclusion.tex}
+
+\cleardoublepage
+\listoffigures
+
+\cleardoublepage
+\listoftables
+
+\bibliographystyle{bib/IEEEtran} % modified IEEEtran to show online access date in 'timestamp' field
+\bibliography{bib/bachelor}
+
+\end{document}
